@@ -107,8 +107,16 @@ proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: 
     flag = if ignoreErrors: {} else: {SafeDisconn}
     url: Uri = when url is Uri: url else: parseUri(url)
     proxi: string = if unlikely(proxyUrl.len > 0): proxyUrl else: url.hostname
+  if likely(url.scheme == "https"):
+    var ctx =
+      try:    newContext(verifyMode = CVerifyPeer)
+      except: raise newException(IOError, getCurrentExceptionMsg())
+    socket.connect(proxi, portSsl, timeout)
+    try:    ctx.wrapConnectedSocket(socket, handshakeAsClient, proxi)
+    except: raise newException(IOError, getCurrentExceptionMsg())
+  else: socket.connect(proxi, port, timeout)
 
-  # ? ? ?   Fix me for the love of Cthulhu.
+
 
   privateAccess url.type
   result = (url: url, metod: metod, headers: @[], code: 42, body: "" )
