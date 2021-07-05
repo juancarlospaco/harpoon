@@ -115,7 +115,8 @@ proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: 
     try:    ctx.wrapConnectedSocket(socket, handshakeAsClient, proxi)
     except: raise newException(IOError, getCurrentExceptionMsg())
   else: socket.connect(proxi, port, timeout)
-
+  if ignoreErrors: discard socket.trySend(toString(url, metod, headers, body))
+  else:            socket.send(toString(url, metod, headers, body), flags = flag)
 
 
   privateAccess url.type
