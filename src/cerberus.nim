@@ -95,9 +95,9 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
   for _ in unrollStringOps("\r\n", it): result.add it
   result.add body
 
-proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: openArray[(string, string)];
+proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; body = ""; headers: openArray[(string, string)];
     timeout = -1; userAgent = "nim/http"; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
-    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false): auto =
+    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto =
   var
     res: string
     chunked: bool
@@ -117,16 +117,52 @@ proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: 
   else: socket.connect(proxi, port, timeout)
   if ignoreErrors: discard socket.trySend(toString(url, metod, headers, body))
   else:            socket.send(toString(url, metod, headers, body), flags = flag)
-
-
-  privateAccess url.type
-  result = (url: url, metod: metod, headers: @[], code: 42, body: "" )
+  while true:
+    let line = socket.recvLine(timeout, flags = flag)
+    res.add line
+    res.add '\r'
+    res.add '\n'
+    let lineLower = line.toLowerAscii()
+    if line == "\r\n":                              break
+    elif lineLower.startsWith("content-length:"):   contentLength = parseInt(line.split(' ')[1])
+    elif lineLower == "transfer-encoding: chunked": chunked = true
+  if chunked:
+    while true:
+      var chunkLenStr: string
+      while true:
+        var readChar: char
+        let readLen = socket.recv(readChar.addr, 1, timeout)
+        doAssert readLen == 1
+        chunkLenStr.add(readChar)
+        if chunkLenStr.endsWith("\r\n"): break
+      if chunkLenStr == "\r\n": break
+      var chunkLen: int
+      discard parseHex(chunkLenStr, chunkLen)
+      if chunkLen == 0: break
+      var chunk = newString(chunkLen)
+      let readLen = socket.recv(chunk[0].addr, chunkLen, timeout)
+      doAssert readLen == chunkLen
+      chunks.add(chunk)
+      var endStr = newString(2)
+      let readLen2 = socket.recv(endStr[0].addr, 2, timeout)
+      assert endStr == "\r\n"
+  else:
+    var chunk = newString(contentLength)
+    let readLen = socket.recv(chunk[0].addr, contentLength, timeout)
+    assert readLen == contentLength
+    chunks.add(chunk[0 .. ^2])
+  when bodyOnly: result = chunks.join
+  else:
+    privateAccess url.type     # To use Uri.isIpv6
+    result = (url: url, metod: metod, isIpv6: url.isIpv6,
+              headers: if parseHeader: parseHeaders(res)  else: @[],
+              code:    if parseStatus: parseHttpCode(res) else: 0  ,
+              body:    if parseBody:   chunks.join        else: "" )
 
 
 const bodi = """field1=value1"""
 const h = newDefaultHeaders(bodi)
 let socket: Socket = newSocket()
-echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h)
+echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
+echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
 socket.close()
-
-
