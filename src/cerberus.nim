@@ -100,5 +100,5 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
 const bodi = """field1=value1"""
 const h = newDefaultHeaders(bodi)
 let socket: Socket = newSocket()
-echo socket.request("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h)
+echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h)
 socket.close()
