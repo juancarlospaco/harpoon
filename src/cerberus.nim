@@ -95,7 +95,6 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
   for _ in unrollStringOps("\r\n", it): result.add it
   result.add body
 
-
 proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: openArray[(string, string)];
     timeout = -1; userAgent = "nim/http"; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
     parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false): auto =
@@ -104,9 +103,14 @@ proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: 
     chunked: bool
     contentLength: int
     chunks: seq[string]
+  let
+    flag = if ignoreErrors: {} else: {SafeDisconn}
+    url: Uri = when url is Uri: url else: parseUri(url)
+    proxi: string = if unlikely(proxyUrl.len > 0): proxyUrl else: url.hostname
 
   # ? ? ?   Fix me for the love of Cthulhu.
 
+  privateAccess url.type
   result = (url: url, metod: metod, headers: @[], code: 42, body: "" )
 
 
