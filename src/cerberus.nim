@@ -6,7 +6,7 @@ template newDefaultHeaders*(body = ""; userAgent = "x"; contentType = "text/plai
   [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept)]
 
 template newDefaultHeaders*(body = ""; userAgent = "x"; contentType = "text/plain"; accept = "*/*"; proxyUser, proxyPassword: string): array[5, (string, string)] =
-  [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept), ("Proxy-Authorization", "Basic " & base64.encode(proxyUser & ' ' & proxyPassword))]
+  [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept), ("Proxy-Authorization", "Basic " & base64.encode(proxyUser & ':' & proxyPassword))]
 
 macro unrollStringOps(x: ForLoopStmt) =
   expectKind x, nnkForStmt
@@ -30,6 +30,32 @@ template parseHttpCode(s: string): int =
     of '9': static(9 * pos)
     else:   0
   char2Int(s[9], 100) + char2Int(s[10], 10) + char2Int(s[11], 1)
+
+func parseHeaders*(data: string): seq[(string, string)] =
+  var i = 0
+  while data[i] != '\l': inc i
+  inc i
+  var value = false
+  var current: (string, string)
+  while i < data.len:
+    case data[i]
+    of ':':
+      if value: current[1].add ':'
+      value = true
+    of ' ':
+      if value:
+        if current[1].len != 0: current[1].add data[i]
+      else: current[0].add(data[i])
+    of '\c': discard
+    of '\l':
+      if current[0].len == 0: return result
+      result.add current
+      value = false
+      current = ("", "")
+    else:
+      if value: current[1].add data[i] else: current[0].add data[i]
+    inc i
+  return
 
 func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string =
   var it: char
@@ -68,3 +94,25 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
     for _ in unrollStringOps("\r\n", it): result.add it
   for _ in unrollStringOps("\r\n", it): result.add it
   result.add body
+
+
+const bodi = """field1=value1"""
+const h {.used.} = newDefaultHeaders(bodi)
+let soketito: Socket = newSocket()
+# ???
+soketito.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
