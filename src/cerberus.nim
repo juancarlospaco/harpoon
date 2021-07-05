@@ -96,9 +96,24 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
   result.add body
 
 
-# Imagine API like
+proc fetch*(socket: Socket; url: string; metod: HttpMethod; body = ""; headers: openArray[(string, string)];
+    timeout = -1; userAgent = "nim/http"; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
+    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false): auto =
+  var
+    res: string
+    chunked: bool
+    contentLength: int
+    chunks: seq[string]
+
+  # ? ? ?   Fix me for the love of Cthulhu.
+
+  result = (url: url, metod: metod, headers: @[], code: 42, body: "" )
+
+
 const bodi = """field1=value1"""
 const h = newDefaultHeaders(bodi)
 let socket: Socket = newSocket()
 echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h)
 socket.close()
+
+
