@@ -58,9 +58,10 @@ func parseHeaders*(data: string): seq[(string, string)] =
   return
 
 func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string =
+  assert not(headers.len > headerLimit), "Header must not be > 10_000 lenght"
   var it: char
   var path = url.path
-  if path.len == 0: path = "/"
+  if unlikely(path.len == 0): path = "/"
   if url.query.len > 0:
     path.add '?'
     path.add url.query
@@ -92,7 +93,6 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
     for _ in unrollStringOps(": ", it): result.add it
     result.add header[1]
     for _ in unrollStringOps("\r\n", it): result.add it
-  assert not headers.len > 10_000, "Header must not be > 10_000 chars"
   for _ in unrollStringOps("\r\n", it): result.add it
   result.add body
 
@@ -167,3 +167,7 @@ let socket: Socket = newSocket()
 echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
 echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
 socket.close()
+
+
+
+
