@@ -1,6 +1,5 @@
 import std/[os, net, uri, base64, macros, parseutils, strutils, httpcore, importutils]
-
-const cacertUrl* = "https://curl.se/ca/cacert.pem"  # cacert.pem URL.
+export HttpMethod, HttpCode
 
 template newDefaultHeaders*(body = ""; userAgent = "x"; contentType = "text/plain"; accept = "*/*"): array[4, (string, string)] =
   [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept)]
@@ -31,7 +30,7 @@ template parseHttpCode(s: string): int =
     else:   0
   char2Int(s[9], 100) + char2Int(s[10], 10) + char2Int(s[11], 1)
 
-func parseHeaders*(data: string): seq[(string, string)] =
+func parseHeaders(data: string): seq[(string, string)] {.raises: [].} =
   var i = 0
   while data[i] != '\l': inc i
   inc i
@@ -57,14 +56,13 @@ func parseHeaders*(data: string): seq[(string, string)] =
     inc i
   return
 
-func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string =
-  assert not(headers.len > headerLimit), "Header must not be > 10_000 lenght"
+func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string {.raises: [].} =
   var it: char
-  var path = url.path
-  if unlikely(path.len == 0): path = "/"
+  var temp: string = url.path
+  if unlikely(temp.len == 0): temp = "/"
   if url.query.len > 0:
-    path.add '?'
-    path.add url.query
+    temp.add '?'
+    temp.add url.query
   case metod
   of HttpGet:
     for _ in unrollStringOps("GET ", it):     result.add it
@@ -84,21 +82,26 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
     for _ in unrollStringOps("OPTIONS ", it): result.add it
   of HttpConnect:
     for _ in unrollStringOps("CONNECT ", it): result.add it
-  result.add path
+  result.add temp
   for _ in unrollStringOps(" HTTP/1.1\r\nHost: ", it): result.add it
   result.add url.hostname
   for _ in unrollStringOps("\r\n", it): result.add it
+  temp.setLen 0  # Reuse variable.
   for header in headers:
-    result.add header[0]
-    for _ in unrollStringOps(": ", it): result.add it
-    result.add header[1]
-    for _ in unrollStringOps("\r\n", it): result.add it
-  for _ in unrollStringOps("\r\n", it): result.add it
+    temp.add header[0]
+    for _ in unrollStringOps(": ", it):   temp.add it
+    temp.add header[1]
+    for _ in unrollStringOps("\r\n", it): temp.add it
+  for _ in unrollStringOps("\r\n", it):   temp.add it
+  assert not(temp.len > headerLimit), "Header must not be > 10_000 char"
+  result.add temp
   result.add body
 
-proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; body = ""; headers: openArray[(string, string)];
+proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
     timeout = -1; userAgent = "nim/http"; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
-    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto =
+    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto {.raises: [IOError, OSError, TimeoutError, SslError, ValueError].} =
+  assert timeout > -2, "Timeout argument must be -1 or a non-zero positive integer"
+  assert url.len > 0, "URL must not be empty string"
   var
     res: string
     chunked: bool
@@ -151,23 +154,86 @@ proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; body = ""; he
     var chunk = newString(contentLength)
     let readLen = socket.recv(chunk[0].addr, contentLength, timeout)
     assert readLen == contentLength
-    chunks.add(chunk[0 .. ^2])
+    chunks.add chunk
   when bodyOnly: result = chunks.join
   else:
     privateAccess url.type     # To use Uri.isIpv6
     result = (url: url, metod: metod, isIpv6: url.isIpv6,
               headers: if parseHeader: parseHeaders(res)  else: @[],
-              code:    if parseStatus: parseHttpCode(res) else: 0  ,
+              code:    if parseStatus: parseHttpCode(res).HttpCode else: 0.HttpCode,
               body:    if parseBody:   chunks.join        else: "" )
 
+template get*(url: string or Uri): auto =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch url, HttpGet, newDefaultHeaders("")
 
-const bodi = """field1=value1"""
-const h = newDefaultHeaders(bodi)
-let socket: Socket = newSocket()
-echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
-echo socket.fetch("http://httpbin.org/get?foo=bar", metod = HttpGet, body = "", headers = h, bodyOnly = true)
-socket.close()
+template getContent*(url: string or Uri): string =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true)
 
+template post*(url: string or Uri; body: string): auto =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch url, HttpPost, newDefaultHeaders(body), body
 
+template postContent*(url: string or Uri; body: string): string =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true)
 
+template put*(url: string or Uri; body: string): auto =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch url, HttpPut, newDefaultHeaders(body), body
 
+template putContent*(url: string or Uri; body: string): string =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch(url, HttpPut, newDefaultHeaders(body), body, bodyOnly = true)
+
+template patch*(url: string or Uri; body: string): auto =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch url, HttpPatch, newDefaultHeaders(body), body
+
+template patchContent*(url: string or Uri; body: string): string =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch(url, HttpPatch, newDefaultHeaders(body), body, bodyOnly = true)
+
+template delete*(url: string or Uri): auto =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch url, HttpDelete, newDefaultHeaders("")
+
+template deleteContent*(url: string or Uri): string =
+  let socket: Socket = newSocket()
+  defer: close socket
+  socket.fetch(url, HttpDelete, newDefaultHeaders(""), bodyOnly = true)
+
+template downloadFile*(url: string or Uri; filename: string) =
+  assert filename.len > 0, "filename must not be an empty string"
+  let socket: Socket = newSocket()
+  defer: close socket
+  writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true))
+
+runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl --import:std/net --import:std/httpcore":
+  block:
+    doAssert get"http://httpbin.org/get".code == Http200
+    doAssert getContent"http://httpbin.org/get".len > 0
+  block:
+    doAssert post("http://httpbin.org/post", "data here").code == Http200
+    doAssert postContent("http://httpbin.org/post", "data here").len > 0
+  block:
+    doAssert delete"http://httpbin.org/delete".code == Http200
+    doAssert deleteContent"http://httpbin.org/delete".len > 0
+  block:
+    doAssert put("http://httpbin.org/put", "data here").code == Http200
+    doAssert putContent("http://httpbin.org/put", "data here").len > 0
+  block:
+    doAssert patch("http://httpbin.org/patch", "data here").code == Http200
+    doAssert patchContent("http://httpbin.org/patch", "data here").len > 0
+  block:
+    downloadFile "http://httpbin.org/image/png", "temp.png"
