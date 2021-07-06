@@ -98,7 +98,7 @@ func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)];
   result.add body
 
 proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
-    timeout = -1; userAgent = "nim/http"; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
+    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
     parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto {.raises: [IOError, OSError, TimeoutError, SslError, ValueError].} =
   assert timeout > -2, "Timeout argument must be -1 or a non-zero positive integer"
   assert url.len > 0, "URL must not be empty string"
@@ -163,72 +163,45 @@ proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: open
               code:    if parseStatus: parseHttpCode(res).HttpCode else: 0.HttpCode,
               body:    if parseBody:   chunks.join        else: "" )
 
-template get*(url: string or Uri): auto =
+template fetchImpl(code): untyped {.dirty.} =
   let socket: Socket = newSocket()
   defer: close socket
-  socket.fetch url, HttpGet, newDefaultHeaders("")
+  code
 
-template getContent*(url: string or Uri): string =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true)
+proc get*(url: string or Uri): auto = fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders("")))
 
-template post*(url: string or Uri; body: string): auto =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch url, HttpPost, newDefaultHeaders(body), body
+proc getContent*(url: string or Uri): string = fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true))
 
-template postContent*(url: string or Uri; body: string): string =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true)
+proc post*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body))
 
-template put*(url: string or Uri; body: string): auto =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch url, HttpPut, newDefaultHeaders(body), body
+proc postContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true))
 
-template putContent*(url: string or Uri; body: string): string =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch(url, HttpPut, newDefaultHeaders(body), body, bodyOnly = true)
+proc put*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body))
 
-template patch*(url: string or Uri; body: string): auto =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch url, HttpPatch, newDefaultHeaders(body), body
+proc putContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body, bodyOnly = true))
 
-template patchContent*(url: string or Uri; body: string): string =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch(url, HttpPatch, newDefaultHeaders(body), body, bodyOnly = true)
+proc patch*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body))
 
-template delete*(url: string or Uri): auto =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch url, HttpDelete, newDefaultHeaders("")
+proc patchContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body, bodyOnly = true))
 
-template deleteContent*(url: string or Uri): string =
-  let socket: Socket = newSocket()
-  defer: close socket
-  socket.fetch(url, HttpDelete, newDefaultHeaders(""), bodyOnly = true)
+proc delete*(url: string or Uri): auto = fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders("")))
 
-template downloadFile*(url: string or Uri; filename: string) =
+proc deleteContent*(url: string or Uri): string = fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders(""), bodyOnly = true))
+
+proc downloadFile*(url: string or Uri; filename: string) =
   assert filename.len > 0, "filename must not be an empty string"
-  let socket: Socket = newSocket()
-  defer: close socket
-  writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true))
+  fetchImpl(writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true)))
 
 runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl --import:std/net --import:std/httpcore":
   block:
-    doAssert get"http://httpbin.org/get".code == Http200
-    doAssert getContent"http://httpbin.org/get".len > 0
+    doAssert get("http://httpbin.org/get").code == Http200
+    doAssert getContent("http://httpbin.org/get").len > 0
   block:
     doAssert post("http://httpbin.org/post", "data here").code == Http200
     doAssert postContent("http://httpbin.org/post", "data here").len > 0
   block:
-    doAssert delete"http://httpbin.org/delete".code == Http200
-    doAssert deleteContent"http://httpbin.org/delete".len > 0
+    doAssert delete("http://httpbin.org/delete").code == Http200
+    doAssert deleteContent("http://httpbin.org/delete").len > 0
   block:
     doAssert put("http://httpbin.org/put", "data here").code == Http200
     doAssert putContent("http://httpbin.org/put", "data here").len > 0
