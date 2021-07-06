@@ -87,11 +87,12 @@ func toString*(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]
   for _ in unrollStringOps(" HTTP/1.1\r\nHost: ", it): result.add it
   result.add url.hostname
   for _ in unrollStringOps("\r\n", it): result.add it
-  for header in headers:  # Headers have a soft limit of 10_000 char ?.
+  for header in headers:
     result.add header[0]
     for _ in unrollStringOps(": ", it): result.add it
     result.add header[1]
     for _ in unrollStringOps("\r\n", it): result.add it
+  assert not headers.len > 10_000, "Header must not be > 10_000 chars"
   for _ in unrollStringOps("\r\n", it): result.add it
   result.add body
 
