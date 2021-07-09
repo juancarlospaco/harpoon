@@ -290,6 +290,15 @@ proc downloadFile*(url: Uri; filename: string) =
   assert filename.len > 0, "filename must not be an empty string"
   fetchImpl(writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true)))
 
+proc downloadFile*(files: openArray[tuple[url: Uri; path: string]]) =
+  assert files.len > 0, "files must not be empty"
+  let socket: Socket = newSocket()
+  try:
+    for url_file in files:
+      assert url_file.path.len > 0, "path must not be empty string"
+      writeFile(url_file.path, socket.fetch(url_file.url, HttpGet, newDefaultHeaders"", bodyOnly = true))
+  finally: close socket
+
 proc getContent*(url: string): Future[string] {.async.} =
   asyncFetchImpl(url, "", HttpGet)
 
@@ -331,6 +340,7 @@ runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl -d:nimStressOrc --im
     doAssert patchContent(parseUri"http://httpbin.org/patch", "data here").len > 0
   block:
     downloadFile parseUri"http://httpbin.org/image/png", "temp.png"
+    downloadFile [(url: parseUri"http://httpbin.org/image/png", path: "temp.png"), (url: parseUri"http://httpbin.org/image/jpg", path: "temp.jpg")]
     doAssert newDefaultHeaders(body = "data here", proxyUser = "root", proxyPassword = "password") is array[5, (string, string)]
   block:
     proc example() {.async, used.} =
