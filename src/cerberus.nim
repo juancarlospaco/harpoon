@@ -1,11 +1,21 @@
-import std/[os, net, uri, base64, macros, parseutils, strutils, httpcore, importutils]
+import std/[net, asyncnet, asyncdispatch, macros]
+from std/strutils import split, toLowerAscii, join, parseInt, startsWith, endsWith
+from std/times import now, inMilliseconds, `-`
+from std/httpcore import HttpMethod, HttpCode
+from std/importutils import privateAccess
+from std/parseutils import parseHex
+from std/uri import Uri, parseUri
+from std/base64 import encode
 export HttpMethod, HttpCode
 
-template newDefaultHeaders*(body = ""; userAgent = "x"; contentType = "text/plain"; accept = "*/*"): array[4, (string, string)] =
+template newDefaultHeaders*(body: string; contentType = "text/plain"; accept = "*/*"; userAgent = "x"): array[4, (string, string)] =
   [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept)]
 
-template newDefaultHeaders*(body = ""; userAgent = "x"; contentType = "text/plain"; accept = "*/*"; proxyUser, proxyPassword: string): array[5, (string, string)] =
-  [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept), ("Proxy-Authorization", "Basic " & base64.encode(proxyUser & ':' & proxyPassword))]
+template newDefaultHeaders*(body: string; doNotTrack: bool; contentType = "application/json"; accept = "application/json"; userAgent = "x"): array[5, (string, string)] =
+  [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept), ("Dnt", if doNotTrack: "1" else: "0")]
+
+template newDefaultHeaders*(body: string; proxyUser: string; proxyPassword: string; contentType = "text/plain"; accept = "*/*"; userAgent = "x"): array[5, (string, string)] =
+  [("Content-Length", $body.len), ("User-Agent", userAgent), ("Content-Type", contentType), ("Accept", accept), ("Proxy-Authorization", "Basic " & encode(proxyUser & ':' & proxyPassword))]
 
 macro unrollStringOps(x: ForLoopStmt) =
   expectKind x, nnkForStmt
@@ -57,7 +67,7 @@ func parseHeaders(data: string): seq[(string, string)] {.raises: [].} =
   return
 
 func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string {.raises: [].} =
-  var it: char
+  var it: char  # TODO: Better name for this func.
   var temp: string = url.path
   if unlikely(temp.len == 0): temp = "/"
   if url.query.len > 0:
@@ -93,15 +103,14 @@ func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)];
     temp.add header[1]
     for _ in unrollStringOps("\r\n", it): temp.add it
   for _ in unrollStringOps("\r\n", it):   temp.add it
-  assert not(temp.len > headerLimit), "Header must not be > 10_000 char"
+  assert not(temp.len > 10_000), "Header must not be > 10_000 char"
   result.add temp
   result.add body
 
-proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
+proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
     timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
     parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto {.raises: [IOError, OSError, TimeoutError, SslError, ValueError].} =
-  assert timeout > -2, "Timeout argument must be -1 or a non-zero positive integer"
-  assert url.len > 0, "URL must not be empty string"
+  assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
   var
     res: string
     chunked: bool
@@ -109,7 +118,6 @@ proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: open
     chunks: seq[string]
   let
     flag = if ignoreErrors: {} else: {SafeDisconn}
-    url: Uri = when url is Uri: url else: parseUri(url)
     proxi: string = if unlikely(proxyUrl.len > 0): proxyUrl else: url.hostname
   if likely(url.scheme == "https"):
     var ctx =
@@ -157,56 +165,179 @@ proc fetch*(socket: Socket; url: string or Uri; metod: HttpMethod; headers: open
     chunks.add chunk
   when bodyOnly: result = chunks.join
   else:
-    privateAccess url.type     # To use Uri.isIpv6
+    privateAccess url.type  # To use Uri.isIpv6
     result = (url: url, metod: metod, isIpv6: url.isIpv6,
               headers: if parseHeader: parseHeaders(res)  else: @[],
               code:    if parseStatus: parseHttpCode(res).HttpCode else: 0.HttpCode,
               body:    if parseBody:   chunks.join        else: "" )
+
+proc fetch*(socket: AsyncSocket; url: string; metod: HttpMethod; headers: seq[(string, string)]; body = "";
+    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
+    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false
+    ): Future[tuple[url: Uri, metod: HttpMethod, isIpv6: bool, headers: seq[(string, string)], code: HttpCode, body: string]] {.async, raises: [IOError, OSError, SslError, ValueError, Exception].} =
+  assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
+  assert url.len > 0, "URL must not be empty string"
+  template timeoutImpl() =
+    if unlikely(timeout != -1 and (now() - t0).inMilliseconds > timeout): return
+  var
+    res: string
+    chunked: bool
+    contentLength: int
+    chunks: seq[string]
+  let
+    t0 = now()
+    flag = if ignoreErrors: {} else: {SafeDisconn}
+    url: Uri = parseUri(url)
+    proxi: string = if unlikely(proxyUrl.len > 0): proxyUrl else: url.hostname
+  if likely(url.scheme == "https"):
+    var ctx =
+      try:    newContext(verifyMode = CVerifyPeer)
+      except: raise newException(IOError, getCurrentExceptionMsg())
+    await socket.connect(proxi, portSsl)
+    timeoutImpl()
+    try:    ctx.wrapConnectedSocket(socket, handshakeAsClient, proxi)
+    except: raise newException(IOError, getCurrentExceptionMsg())
+  else:
+    await socket.connect(proxi, port)
+    timeoutImpl()
+  await socket.send(toString(url, metod, headers, body), flags = flag)
+  timeoutImpl()
+  while true:
+    let line = await socket.recvLine(flags = flag)
+    res.add line
+    res.add '\r'
+    res.add '\n'
+    let lineLower = line.toLowerAscii()
+    if line == "\r\n":                              break
+    elif lineLower.startsWith("content-length:"):   contentLength = parseInt(line.split(' ')[1])
+    elif lineLower == "transfer-encoding: chunked": chunked = true
+    timeoutImpl()
+  if chunked:
+    while true:
+      var chunkLenStr: string
+      while true:
+        var readChar: char
+        let readLen = await socket.recvInto(readChar.addr, 1)
+        doAssert readLen == 1
+        chunkLenStr.add(readChar)
+        if chunkLenStr.endsWith("\r\n"): break
+        timeoutImpl()
+      if chunkLenStr == "\r\n": break
+      var chunkLen: int
+      discard parseHex(chunkLenStr, chunkLen)
+      if chunkLen == 0: break
+      var chunk = newString(chunkLen)
+      let readLen = await socket.recvInto(chunk[0].addr, chunkLen)
+      doAssert readLen == chunkLen
+      chunks.add(chunk)
+      var endStr = newString(2)
+      let readLen2 = await socket.recvInto(endStr[0].addr, 2)
+      assert endStr == "\r\n"
+      timeoutImpl()
+  else:
+    var chunk = newString(contentLength)
+    let readLen = await socket.recvInto(chunk[0].addr, contentLength)
+    assert readLen == contentLength
+    chunks.add chunk
+    timeoutImpl()
+  privateAccess url.type  # To use Uri.isIpv6
+  result = (url: url, metod: metod, isIpv6: url.isIpv6,
+            headers: if parseHeader: parseHeaders(res)  else: @[],
+            code:    if parseStatus: parseHttpCode(res).HttpCode else: 0.HttpCode,
+            body:    if parseBody:   chunks.join        else: "" )
+
+template asyncFetchImpl(url: string; bodi: string; metod: static[HttpMethod]): untyped {.dirty.} =
+  let asincSocket: AsyncSocket = newAsyncSocket()
+  try: result = await(fetch(asincSocket, url, metod, @(newDefaultHeaders(bodi)), parseHeader = false, parseStatus = false)).body
+  finally: close asincSocket
 
 template fetchImpl(code): untyped {.dirty.} =
   let socket: Socket = newSocket()
   defer: close socket
   code
 
-proc get*(url: string or Uri): auto = fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders("")))
+proc get*(url: Uri): auto =
+  fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders""))
 
-proc getContent*(url: string or Uri): string = fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true))
+proc getContent*(url: Uri): string =
+  fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true))
 
-proc post*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body))
+proc post*(url: Uri; body: string): auto =
+  fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body))
 
-proc postContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true))
+proc postContent*(url: Uri; body: string): string =
+  fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true))
 
-proc put*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body))
+proc put*(url: Uri; body: string): auto =
+  fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body))
 
-proc putContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body, bodyOnly = true))
+proc putContent*(url: Uri; body: string): string =
+  fetchImpl(socket.fetch(url, HttpPut, newDefaultHeaders(body), body, bodyOnly = true))
 
-proc patch*(url: string or Uri; body: string): auto = fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body))
+proc patch*(url: Uri; body: string): auto =
+  fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body))
 
-proc patchContent*(url: string or Uri; body: string): string = fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body, bodyOnly = true))
+proc patchContent*(url: Uri; body: string): string =
+  fetchImpl(socket.fetch(url, HttpPatch, newDefaultHeaders(body), body, bodyOnly = true))
 
-proc delete*(url: string or Uri): auto = fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders("")))
+proc delete*(url: Uri): auto =
+  fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders""))
 
-proc deleteContent*(url: string or Uri): string = fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders(""), bodyOnly = true))
+proc deleteContent*(url: Uri): string =
+  fetchImpl(socket.fetch(url, HttpDelete, newDefaultHeaders"", bodyOnly = true))
 
-proc downloadFile*(url: string or Uri; filename: string) =
+proc downloadFile*(url: Uri; filename: string) =
   assert filename.len > 0, "filename must not be an empty string"
-  fetchImpl(writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders(""), bodyOnly = true)))
+  fetchImpl(writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true)))
 
-runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl --import:std/net --import:std/httpcore":
+proc getContent*(url: string): Future[string] {.async.} =
+  asyncFetchImpl(url, "", HttpGet)
+
+proc postContent*(url: string; body: string): Future[string] {.async.} =
+  asyncFetchImpl(url, body, HttpPost)
+
+proc putContent*(url: string; body: string): Future[string] {.async.} =
+  asyncFetchImpl(url, body, HttpPut)
+
+proc patchContent*(url: string; body: string): Future[string] {.async.} =
+  asyncFetchImpl(url, body, HttpPatch)
+
+proc deleteContent*(url: string): Future[string] {.async.} =
+  asyncFetchImpl(url, "", HttpDelete)
+
+proc downloadFile*(url: string; filename: string): Future[void] {.async.} =
+  assert filename.len > 0, "filename must not be an empty string"
+  let asincSocket: AsyncSocket = newAsyncSocket()
+  try: writeFile(filename, await(fetch(asincSocket, url, HttpGet, @(newDefaultHeaders""))).body)
+  finally: close asincSocket
+
+runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl -d:nimStressOrc --import:std/httpcore":
+  import std/asyncdispatch      # Async works. Can work with Threads, Tasks, Macros, etc.
+  from std/uri import parseUri  # To use Uri.
   block:
-    doAssert get("http://httpbin.org/get").code == Http200
-    doAssert getContent("http://httpbin.org/get").len > 0
+    doAssert get(parseUri"http://httpbin.org/get").code == Http200
+    doAssert getContent(parseUri"http://httpbin.org/get").len > 0
   block:
-    doAssert post("http://httpbin.org/post", "data here").code == Http200
-    doAssert postContent("http://httpbin.org/post", "data here").len > 0
+    doAssert post(parseUri"http://httpbin.org/post", "data here").code == Http200
+    doAssert postContent(parseUri"http://httpbin.org/post", "data here").len > 0
   block:
-    doAssert delete("http://httpbin.org/delete").code == Http200
-    doAssert deleteContent("http://httpbin.org/delete").len > 0
+    doAssert delete(parseUri"http://httpbin.org/delete").code == Http200
+    doAssert deleteContent(parseUri"http://httpbin.org/delete").len > 0
   block:
-    doAssert put("http://httpbin.org/put", "data here").code == Http200
-    doAssert putContent("http://httpbin.org/put", "data here").len > 0
+    doAssert put(parseUri"http://httpbin.org/put", "data here").code == Http200
+    doAssert putContent(parseUri"http://httpbin.org/put", "data here").len > 0
   block:
-    doAssert patch("http://httpbin.org/patch", "data here").code == Http200
-    doAssert patchContent("http://httpbin.org/patch", "data here").len > 0
+    doAssert patch(parseUri"http://httpbin.org/patch", "data here").code == Http200
+    doAssert patchContent(parseUri"http://httpbin.org/patch", "data here").len > 0
   block:
-    downloadFile "http://httpbin.org/image/png", "temp.png"
+    downloadFile parseUri"http://httpbin.org/image/png", "temp.png"
+    doAssert newDefaultHeaders(body = "data here", proxyUser = "root", proxyPassword = "password") is array[5, (string, string)]
+  block:
+    proc example() {.async, used.} =
+      doAssert getContent("http://httpbin.org/get") is Future[string]
+      doAssert deleteContent("http://httpbin.org/delete") is Future[string]
+      doAssert putContent("http://httpbin.org/put", "data here") is Future[string]
+      doAssert postContent("http://httpbin.org/post", "data here") is Future[string]
+      doAssert patchContent("http://httpbin.org/patch", "data here") is Future[string]
+      doAssert downloadFile("http://httpbin.org/image/png", "temp.png") is Future[void]
+    waitFor example()
