@@ -1,6 +1,7 @@
 import std/[net, asyncnet, asyncdispatch, macros]
 from std/strutils import split, toLowerAscii, join, parseInt, startsWith, endsWith
 from std/times import now, inMilliseconds, `-`
+from std/json import JsonNode, parseJson, `$`
 from std/httpcore import HttpMethod, HttpCode
 from std/importutils import privateAccess
 from std/parseutils import parseHex
@@ -290,15 +291,6 @@ proc downloadFile*(url: Uri; filename: string) =
   assert filename.len > 0, "filename must not be an empty string"
   fetchImpl(writeFile(filename, socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true)))
 
-proc downloadFile*(files: openArray[tuple[url: Uri; path: string]]) =
-  assert files.len > 0, "files must not be empty"
-  let socket: Socket = newSocket()
-  try:
-    for url_file in files:
-      assert url_file.path.len > 0, "path must not be empty string"
-      writeFile(url_file.path, socket.fetch(url_file.url, HttpGet, newDefaultHeaders"", bodyOnly = true))
-  finally: close socket
-
 proc getContent*(url: string): Future[string] {.async.} =
   asyncFetchImpl(url, "", HttpGet)
 
@@ -320,8 +312,25 @@ proc downloadFile*(url: string; filename: string): Future[void] {.async.} =
   try: writeFile(filename, await(fetch(asincSocket, url, HttpGet, @(newDefaultHeaders""))).body)
   finally: close asincSocket
 
+proc getJson*(url: Uri): JsonNode =
+  fetchImpl(parseJson(socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true)))
+
+proc postJson*(url: Uri; body: JsonNode): JsonNode =
+  let bodi: string = $body
+  fetchImpl(parseJson(socket.fetch(url, HttpPost, newDefaultHeaders(bodi), bodi, bodyOnly = true)))
+
+proc downloadFile*(files: openArray[tuple[url: Uri; path: string]]) =
+  assert files.len > 0, "files must not be empty"
+  let socket: Socket = newSocket()
+  try:
+    for url_file in files:
+      assert url_file.path.len > 0, "path must not be empty string"
+      writeFile(url_file.path, socket.fetch(url_file.url, HttpGet, newDefaultHeaders"", bodyOnly = true))
+  finally: close socket
+
 runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl -d:nimStressOrc --import:std/httpcore":
   import std/asyncdispatch      # Async works. Can work with Threads, Tasks, Macros, etc.
+  import std/json               # GET and POST from JSON to JSON directly.
   from std/uri import parseUri  # To use Uri.
   block:
     doAssert get(parseUri"http://httpbin.org/get").code == Http200
@@ -339,7 +348,11 @@ runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl -d:nimStressOrc --im
     doAssert patch(parseUri"http://httpbin.org/patch", "data here").code == Http200
     doAssert patchContent(parseUri"http://httpbin.org/patch", "data here").len > 0
   block:
-    downloadFile parseUri"http://httpbin.org/image/png", "temp.png"
+    let jsonData: JsonNode = %*{"key": "value", "other": 42} # GET and POST from JSON to JSON
+    doAssert getJson(parseUri"http://httpbin.org/get") is JsonNode
+    doAssert postJson(parseUri"http://httpbin.org/post", jsonData) is JsonNode
+  block:
+    downloadFile parseUri"http://httpbin.org/image/png", "temp.png" # Download 1 or multiple files
     downloadFile [(url: parseUri"http://httpbin.org/image/png", path: "temp.png"), (url: parseUri"http://httpbin.org/image/jpg", path: "temp.jpg")]
     doAssert newDefaultHeaders(body = "data here", proxyUser = "root", proxyPassword = "password") is array[5, (string, string)]
   block:
