@@ -6,8 +6,17 @@
 - Async and sync client.
 - Works with ARC and ORC.
 - Works with `strictFuncs`.
-- Use `Uri` type for URL.
+- Uses `Uri` type for URL.
+- Response has `isIpv6: bool` attribute.
 - `GET` and `POST` from JSON to JSON directly.
 - `downloadFile` that takes `openArray` of URLs.
-- No unclosed `Socket` bugs, never opens a `Socket`.
-
+- HTTP Headers can be compile-time immutable `const`.
+- Proxy support, with Auth.
+- Timeout support for Async and Sync.
+- Option to skip parsing Headers or Status or Body, if you dont need them.
+- HTTP Methods use `HttpMethod` enum, not strings.
+- Share a `Socket` with multiple clients, reuse `Socket`.
+- Theres no open/close functions for the client, just call `get()` or `post()`.
+- Works with Threads, Tasks, and other Async implementations.
+- Uses very few symbols from stdlib, very future proof.
+- `runnableExamples` with `doAssert` for everything.
