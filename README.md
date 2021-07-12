@@ -20,3 +20,4 @@
 - Works with Threads, Tasks, and other Async implementations.
 - Uses very few symbols from stdlib, very future proof.
 - `runnableExamples` with `doAssert` for everything.
+- Documentation online.
