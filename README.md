@@ -14,7 +14,7 @@
 - Proxy support, with Auth.
 - Timeout support for Async and Sync.
 - Option to skip parsing Headers or Status or Body, if you dont need them.
-- HTTP Methods use `HttpMethod` enum, not strings.
+- HTTP Methods use `HttpMethod` enum, not strings. Status code use `HttpCode` not integers.
 - Share a `Socket` with multiple clients, reuse `Socket`.
 - Theres no open/close functions for the client, just call `get()` or `post()`.
 - Works with Threads, Tasks, and other Async implementations.
