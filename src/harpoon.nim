@@ -109,7 +109,7 @@ func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)];
   result.add body
 
 proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
-    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
+    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 443.Port;
     parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto {.raises: [IOError, OSError, TimeoutError, SslError, ValueError].} =
   assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
   var
@@ -173,7 +173,7 @@ proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(str
               body:    if parseBody:   chunks.join        else: "" )
 
 proc fetch*(socket: AsyncSocket; url: string; metod: HttpMethod; headers: seq[(string, string)]; body = "";
-    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 442.Port;
+    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 443.Port;
     parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false
     ): Future[tuple[url: Uri, metod: HttpMethod, isIpv6: bool, headers: seq[(string, string)], code: HttpCode, body: string]] {.async, raises: [IOError, OSError, SslError, ValueError, Exception].} =
   assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
