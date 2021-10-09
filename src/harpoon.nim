@@ -27,19 +27,22 @@ macro unrollStringOps(x: ForLoopStmt) =
   result = body
 
 template parseHttpCode(s: string): int =
-  template char2Int(c: '0'..'9'; pos: static int): int =
-    case c
-    of '1': static(1 * pos)
-    of '2': static(2 * pos)
-    of '3': static(3 * pos)
-    of '4': static(4 * pos)
-    of '5': static(5 * pos)
-    of '6': static(6 * pos)
-    of '7': static(7 * pos)
-    of '8': static(8 * pos)
-    of '9': static(9 * pos)
-    else:   0
-  char2Int(s[9], 100) + char2Int(s[10], 10) + char2Int(s[11], 1)
+  when defined(danger):
+    template char2Int(c: '0'..'9'; pos: static int): int =
+      case c
+      of '1': static(1 * pos)
+      of '2': static(2 * pos)
+      of '3': static(3 * pos)
+      of '4': static(4 * pos)
+      of '5': static(5 * pos)
+      of '6': static(6 * pos)
+      of '7': static(7 * pos)
+      of '8': static(8 * pos)
+      of '9': static(9 * pos)
+      else:   0
+    char2Int(s[9], 100) + char2Int(s[10], 10) + char2Int(s[11], 1)
+  else:
+    parseInt(s)
 
 func parseHeaders(data: string): seq[(string, string)] {.raises: [].} =
   var i = 0
