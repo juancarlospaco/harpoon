@@ -98,29 +98,26 @@ func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)];
   result.add body
 
 proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
-    timeout = -1; proxyUrl = ""; port = 80.Port; portSsl = 443.Port;
-    parseHeader = true; parseStatus = true; parseBody = true; ignoreErrors = false; bodyOnly: static[bool] = false): auto =
+    timeout = -1; port = 80.Port; portSsl = 443.Port;
+    parseHeader = true; parseStatus = true; parseBody = true; bodyOnly: static[bool] = false): auto =
   assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
   var
     res: string
     chunked: bool
     contentLength: int
     chunks: seq[string]
-  let
-    flag = if ignoreErrors: {} else: {SafeDisconn}
-    proxi: string = if unlikely(proxyUrl.len > 0): proxyUrl else: url.hostname
+  let proxi: string = url.hostname
   if likely(url.scheme == "https"):
     var ctx =
-      try:    newContext(verifyMode = CVerifyPeer)
+      try:    newContext(verifyMode = CVerifyNone)
       except: raise newException(IOError, getCurrentExceptionMsg())
     socket.connect(proxi, portSsl, timeout)
     try:    ctx.wrapConnectedSocket(socket, handshakeAsClient, proxi)
     except: raise newException(IOError, getCurrentExceptionMsg())
   else: socket.connect(proxi, port, timeout)
-  if ignoreErrors: discard socket.trySend(toString(url, metod, headers, body))
-  else:            socket.send(toString(url, metod, headers, body), flags = flag)
+  socket.send(toString(url, metod, headers, body))
   while true:
-    let line = socket.recvLine(timeout, flags = flag)
+    let line = socket.recvLine(timeout)
     res.add line
     res.add '\r'
     res.add '\n'
