@@ -160,7 +160,7 @@ proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(str
       doAssert readLen == chunkLen
       chunks.add(chunk)
       var endStr = newString(2)
-      let readLen2 = socket.recv(endStr[0].addr, 2, timeout)
+      let readLen2 {.used.} = socket.recv(endStr[0].addr, 2, timeout)
       assert endStr == "\r\n"
   else:
     var chunk = newString(contentLength)
