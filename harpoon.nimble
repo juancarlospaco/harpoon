@@ -3,6 +3,6 @@ author      = "Juan_Carlos.nim"
 description = "HTTP Client"
 license     = "MIT"
 srcDir      = "src"
-skipDirs    = @["docs", "bench"]
+skipDirs    = @["docs", "bench", "mini"]
 
-requires "nim >= 1.4.8"
+requires "nim >= 1.4.0"
