@@ -30,7 +30,7 @@ template parseHttpCode(s: string): int =
   else:
     parseInt(s[9..11])
 
-func parseHeaders(data: string): seq[(string, string)] {.raises: [].} =
+func parseHeaders(data: string): seq[(string, string)] {.inline, raises: [].} =
   var i = 0
   while data[i] != '\l': inc i
   inc i
@@ -56,31 +56,30 @@ func parseHeaders(data: string): seq[(string, string)] {.raises: [].} =
     inc i
   return
 
-func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body: string): string {.raises: [].} =
+func toString(url: Uri; metod: static[HttpMethod]; headers: openArray[(string, string)]; body: string): string {.raises: [].} =
   var it: char  # TODO: Better name for this func.
   var temp: string = url.path
   if unlikely(temp.len == 0): temp = "/"
   if url.query.len > 0:
     temp.add '?'
     temp.add url.query
-  case metod
-  of HttpGet:
+  when metod == HttpGet:
     for _ in unrollStringOps("GET ", it):     result.add it
-  of HttpPost:
+  elif metod == HttpPost:
     for _ in unrollStringOps("POST ", it):    result.add it
-  of HttpPut:
+  elif metod == HttpPut:
     for _ in unrollStringOps("PUT ", it):     result.add it
-  of HttpHead:
+  elif metod == HttpHead:
     for _ in unrollStringOps("HEAD ", it):    result.add it
-  of HttpDelete:
+  elif metod == HttpDelete:
     for _ in unrollStringOps("DELETE ", it):  result.add it
-  of HttpPatch:
+  elif metod == HttpPatch:
     for _ in unrollStringOps("PATCH ", it):   result.add it
-  of HttpTrace:
+  elif metod == HttpTrace:
     for _ in unrollStringOps("TRACE ", it):   result.add it
-  of HttpOptions:
+  elif metod == HttpOptions:
     for _ in unrollStringOps("OPTIONS ", it): result.add it
-  of HttpConnect:
+  elif metod == HttpConnect:
     for _ in unrollStringOps("CONNECT ", it): result.add it
   result.add temp
   for _ in unrollStringOps(" HTTP/1.1\r\nHost: ", it): result.add it
@@ -97,8 +96,8 @@ func toString(url: Uri; metod: HttpMethod; headers: openArray[(string, string)];
   result.add temp
   result.add body
 
-proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(string, string)]; body = "";
-    timeout = -1; port = 80.Port; portSsl = 443.Port;
+proc fetch*(socket: Socket; url: Uri; metod: static[HttpMethod]; headers: openArray[(string, string)]; body = "";
+    timeout = -1; port: static[Port] = 80.Port; portSsl: static[Port] = 443.Port;
     parseHeader = true; parseStatus = true; parseBody = true; bodyOnly: static[bool] = false): auto =
   assert timeout > -2 and timeout != 0, "Timeout argument must be -1 or a non-zero positive integer"
   var
@@ -150,13 +149,13 @@ proc fetch*(socket: Socket; url: Uri; metod: HttpMethod; headers: openArray[(str
     let readLen = socket.recv(chunk[0].addr, contentLength, timeout)
     assert readLen == contentLength
     chunks.add chunk
-  when bodyOnly: result = chunks.join
+  when bodyOnly: result = chunks
   else:
     privateAccess url.type  # To use Uri.isIpv6
     result = (url: url, metod: metod, isIpv6: url.isIpv6,
-              headers: if parseHeader: parseHeaders(res)  else: @[],
+              headers: if parseHeader: parseHeaders(res)           else: @[],
               code:    if parseStatus: parseHttpCode(res).HttpCode else: 0.HttpCode,
-              body:    if parseBody:   chunks.join        else: "" )
+              body:    if parseBody:   chunks                      else: @[])
 
 template fetchImpl(code, result): untyped {.dirty.} =
   let socket: Socket = newSocket()
@@ -166,13 +165,13 @@ template fetchImpl(code, result): untyped {.dirty.} =
 proc get*(url: Uri): auto =
   fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders""), result)
 
-proc getContent*(url: Uri): string =
+proc getContent*(url: Uri): seq[string] =
   fetchImpl(socket.fetch(url, HttpGet, newDefaultHeaders"", bodyOnly = true), result)
 
 proc post*(url: Uri; body: string): auto =
   fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body), result)
 
-proc postContent*(url: Uri; body: string): string =
+proc postContent*(url: Uri; body: string): seq[string] =
   fetchImpl(socket.fetch(url, HttpPost, newDefaultHeaders(body), body, bodyOnly = true), result)
 
 runnableExamples"--gc:orc --experimental:strictFuncs -d:ssl -d:nimStressOrc --import:std/httpcore":
